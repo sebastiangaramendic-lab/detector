@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Detector de Residuos Sólidos — Visión Computacional</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1c201d;
+    --bg-2:#141715;
+    --surface:#242822;
+    --surface-2:#2c312a;
+    --line:#3a4038;
+    --text:#ede9df;
+    --text-dim:#9aa196;
+    --safety:#f2b705;
+    --plastico:#f2b705;
+    --vidrio:#2e8b7a;
+    --metal:#8c97a3;
+    --carton:#b5652e;
+    --radius:2px;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+
+  body{
+    background:
+      radial-gradient(circle at 15% 0%, rgba(242,183,5,0.06), transparent 40%),
+      repeating-linear-gradient(135deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 14px),
+      var(--bg);
+    color:var(--text);
+    font-family:'Inter', sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .wrap{
+    max-width:920px;
+    margin:0 auto;
+    padding:36px 20px 80px;
+  }
+
+  /* ---------- header ---------- */
+  .tag{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    letter-spacing:0.12em;
+    color:var(--safety);
+    border:1px solid rgba(242,183,5,0.35);
+    padding:5px 10px;
+    border-radius:var(--radius);
+    background:rgba(242,183,5,0.06);
+  }
+  .tag .dot{width:6px;height:6px;background:var(--safety);border-radius:50%;box-shadow:0 0 6px var(--safety);}
+
+  header{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    flex-wrap:wrap;
+    gap:16px;
+    padding-bottom:22px;
+    margin-bottom:26px;
+    border-bottom:1px dashed var(--line);
+  }
+  h1{
+    font-family:'Archivo Black', sans-serif;
+    text-transform:uppercase;
+    font-size:clamp(28px,5vw,44px);
+    line-height:1.02;
+    letter-spacing:-0.01em;
+    margin:12px 0 6px;
+  }
+  h1 span{color:var(--safety);}
+  .sub{
+    color:var(--text-dim);
+    font-size:14.5px;
+    max-width:520px;
+    line-height:1.5;
+  }
+  .ods{
+    display:flex;
+    gap:8px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+  }
+  .ods span{
+    border:1px solid var(--line);
+    padding:6px 9px;
+    border-radius:var(--radius);
+    color:var(--text-dim);
+  }
+
+  /* ---------- scanner card ---------- */
+  .scanner{
+    background:linear-gradient(180deg, var(--surface), var(--surface-2));
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:22px;
+    position:relative;
+    overflow:hidden;
+  }
+  .scanner::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image: linear-gradient(rgba(237,233,223,0.025) 1px, transparent 1px),
+                       linear-gradient(90deg, rgba(237,233,223,0.025) 1px, transparent 1px);
+    background-size:26px 26px;
+    pointer-events:none;
+  }
+
+  .stage{
+    position:relative;
+    aspect-ratio:16/10;
+    background:var(--bg-2);
+    border:1px solid var(--line);
+    border-radius:4px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+  }
+  .stage img, .stage video{
+    width:100%; height:100%; object-fit:cover;
+    display:none;
+  }
+  .stage.has-media img.active,
+  .stage.has-media video.active{display:block;}
+
+  .placeholder{
+    text-align:center;
+    color:var(--text-dim);
+    padding:20px;
+    font-size:13.5px;
+    max-width:280px;
+  }
+  .placeholder svg{margin-bottom:10px; opacity:0.55;}
+  .stage.has-media .placeholder{display:none;}
+
+  /* corner reticle — signature element */
+  .corner{
+    position:absolute;
+    width:22px; height:22px;
+    border-color:var(--safety);
+    border-style:solid;
+    opacity:0.85;
+    z-index:3;
+  }
+  .corner.tl{top:10px;left:10px;border-width:2px 0 0 2px;}
+  .corner.tr{top:10px;right:10px;border-width:2px 2px 0 0;}
+  .corner.bl{bottom:10px;left:10px;border-width:0 0 2px 2px;}
+  .corner.br{bottom:10px;right:10px;border-width:0 2px 2px 0;}
+
+  .scanline{
+    position:absolute;
+    left:0; right:0; height:2px;
+    background:linear-gradient(90deg, transparent, var(--safety), transparent);
+    box-shadow:0 0 12px 2px rgba(242,183,5,0.6);
+    top:0;
+    display:none;
+    z-index:4;
+  }
+  .stage.scanning .scanline{display:block; animation:scan 1.4s linear infinite;}
+  @keyframes scan{
+    0%{top:4%;}
+    50%{top:94%;}
+    100%{top:4%;}
+  }
+
+  .status-chip{
+    position:absolute;
+    top:10px; left:50%;
+    transform:translateX(-50%);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10.5px;
+    letter-spacing:0.08em;
+    background:rgba(20,23,21,0.85);
+    border:1px solid var(--line);
+    padding:4px 10px;
+    border-radius:20px;
+    color:var(--text-dim);
+    display:none;
+    z-index:5;
+  }
+  .stage.scanning .status-chip{display:block; color:var(--safety); border-color:rgba(242,183,5,0.4);}
+
+  /* controls */
+  .controls{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-top:16px;
+    position:relative;
+    z-index:2;
+  }
+  button, .file-btn{
+    font-family:'Inter', sans-serif;
+    font-weight:600;
+    font-size:13.5px;
+    padding:11px 18px;
+    border-radius:4px;
+    border:1px solid var(--line);
+    background:var(--surface-2);
+    color:var(--text);
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition:border-color .15s ease, transform .1s ease;
+  }
+  button:hover, .file-btn:hover{border-color:var(--safety);}
+  button:active, .file-btn:active{transform:scale(0.98);}
+  button.primary{
+    background:var(--safety);
+    color:#1c1a0c;
+    border-color:var(--safety);
+  }
+  button.primary:hover{filter:brightness(1.08);}
+  button:disabled{opacity:0.4; cursor:not-allowed;}
+  #fileInput{display:none;}
+
+  .hint{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:var(--text-dim);
+    margin-top:10px;
+  }
+
+  /* ---------- results ---------- */
+  .results{
+    margin-top:28px;
+  }
+  .results h2{
+    font-family:'IBM Plex Mono', monospace;
+    text-transform:uppercase;
+    font-size:12px;
+    letter-spacing:0.14em;
+    color:var(--text-dim);
+    margin:0 0 14px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .results h2::after{
+    content:"";
+    flex:1;
+    height:1px;
+    background:var(--line);
+  }
+
+  .bins{
+    display:grid;
+    grid-template-columns:repeat(4, 1fr);
+    gap:10px;
+  }
+  @media (max-width:640px){ .bins{grid-template-columns:repeat(2,1fr);} }
+
+  .bin{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:5px;
+    padding:14px;
+    position:relative;
+    overflow:hidden;
+    transition:border-color .2s ease;
+  }
+  .bin .fill{
+    position:absolute; left:0; bottom:0; right:0;
+    height:0%;
+    opacity:0.16;
+    transition:height .6s cubic-bezier(.2,.8,.2,1);
+  }
+  .bin-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    position:relative;
+    z-index:1;
+  }
+  .bin-name{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11.5px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+  }
+  .bin-swatch{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+  .bin-pct{
+    font-family:'Archivo Black', sans-serif;
+    font-size:26px;
+    margin-top:10px;
+    position:relative;
+    z-index:1;
+  }
+  .bin.winner{border-color:var(--swatch, var(--safety));}
+  .bin.winner .bin-pct{color:var(--swatch, var(--safety));}
+
+  .verdict{
+    margin-top:16px;
+    padding:14px 16px;
+    border-radius:5px;
+    border:1px solid var(--line);
+    background:var(--surface);
+    display:flex;
+    align-items:center;
+    gap:12px;
+    font-size:14px;
+    min-height:20px;
+  }
+  .verdict .lbl{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10.5px;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--text-dim);
+  }
+  .verdict .val{
+    font-family:'Archivo Black', sans-serif;
+    font-size:20px;
+    text-transform:uppercase;
+  }
+  .verdict .swatch-lg{width:14px;height:14px;border-radius:3px;}
+
+  /* ---------- footer ---------- */
+  footer{
+    margin-top:40px;
+    padding-top:18px;
+    border-top:1px dashed var(--line);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:var(--text-dim);
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+
+  .load-msg{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--text-dim);
+    margin-top:14px;
+  }
+  .load-msg.err{color:#e08585;}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div>
+      <div class="tag"><span class="dot"></span>VISIÓN COMPUTACIONAL · MOBILENET</div>
+      <h1>Detector de<br>Residuos <span>Sólidos</span></h1>
+      <p class="sub">Clasificación automática de plástico, vidrio, metal y cartón mediante
+      una red neuronal entrenada en Teachable Machine. Universidad de Lima — Inteligencia Artificial Aplicada.</p>
+    </div>
+    <div class="ods">
+      <span>ODS 11 · Ciudades sostenibles</span>
+      <span>ODS 12 · Consumo responsable</span>
+    </div>
+  </header>
+
+  <div class="scanner">
+    <div class="stage" id="stage">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+      <div class="scanline"></div>
+      <div class="status-chip" id="statusChip">ANALIZANDO MUESTRA…</div>
+
+      <div class="placeholder">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+          <path d="M4 16l4.5-6 3.5 4.5 2.5-3L20 16"/>
+          <rect x="3" y="4" width="18" height="16" rx="1.5"/>
+          <circle cx="8" cy="8" r="1.4"/>
+        </svg>
+        <div>Sube una foto o activa la cámara para identificar el material del residuo</div>
+      </div>
+
+      <img id="previewImg" alt="Muestra a analizar">
+      <video id="previewVideo" autoplay playsinline muted></video>
+    </div>
+
+    <div class="controls">
+      <label class="file-btn" for="fileInput">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        Subir imagen
+      </label>
+      <input type="file" id="fileInput" accept="image/*">
+
+      <button id="camBtn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        Usar cámara
+      </button>
+
+      <button id="captureBtn" style="display:none;">Capturar foto</button>
+
+      <button id="classifyBtn" class="primary" disabled>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.6 5.7 21l2.3-7.2-6-4.4h7.6z"/></svg>
+        Clasificar residuo
+      </button>
+    </div>
+
+    <div class="load-msg" id="loadMsg">Cargando modelo…</div>
+
+    <div id="manualLoad" style="display:none; margin-top:14px; padding-top:14px; border-top:1px dashed var(--line);">
+      <div class="hint" style="margin-top:0; margin-bottom:10px;">
+        La carga automática falló (normal si abriste este archivo con doble clic). Selecciona
+        manualmente los 3 archivos del modelo — con esto funciona sin servidor:
+      </div>
+      <label class="file-btn" for="manualFiles" style="display:inline-flex;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        Seleccionar model.json, weights.bin y metadata.json
+      </label>
+      <input type="file" id="manualFiles" multiple accept=".json,.bin" style="display:none;">
+      <div class="hint" id="manualStatus"></div>
+    </div>
+  </div>
+
+  <div class="results">
+    <h2>Contenedores · probabilidad por clase</h2>
+    <div class="bins" id="bins"></div>
+    <div class="verdict" id="verdict">
+      <span class="lbl">Resultado</span>
+      <span class="val" id="verdictVal">— esperando muestra —</span>
+    </div>
+  </div>
+
+  <footer>
+    <span>Modelo: Teachable Machine (transfer learning · MobileNet) · 4 clases</span>
+    <span>Fase 1 del proyecto — clasificación en navegador vía TensorFlow.js</span>
+  </footer>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+<script>
+  // Coloca este archivo en la MISMA carpeta que model.json, weights.bin y metadata.json
+  const MODEL_URL = "./model.json";
+  const METADATA_URL = "./metadata.json";
+
+  const COLORS = {
+    "plastico": "#f2b705",
+    "plástico": "#f2b705",
+    "vidrio": "#2e8b7a",
+    "metal": "#8c97a3",
+    "carton": "#b5652e",
+    "cartón": "#b5652e"
+  };
+
+  let model, maxPredictions, labels;
+  const stage = document.getElementById('stage');
+  const previewImg = document.getElementById('previewImg');
+  const previewVideo = document.getElementById('previewVideo');
+  const fileInput = document.getElementById('fileInput');
+  const camBtn = document.getElementById('camBtn');
+  const captureBtn = document.getElementById('captureBtn');
+  const classifyBtn = document.getElementById('classifyBtn');
+  const loadMsg = document.getElementById('loadMsg');
+  const binsEl = document.getElementById('bins');
+  const verdictVal = document.getElementById('verdictVal');
+  const verdict = document.getElementById('verdict');
+
+  let stream = null;
+  let currentSource = null; // 'image' | 'video'
+
+  function colorFor(label){
+    const key = label.toLowerCase();
+    return COLORS[key] || '#f2b705';
+  }
+
+  function buildBins(){
+    binsEl.innerHTML = '';
+    labels.forEach(label => {
+      const c = colorFor(label);
+      const bin = document.createElement('div');
+      bin.className = 'bin';
+      bin.id = 'bin-' + label;
+      bin.innerHTML = `
+        <div class="fill" style="background:${c}"></div>
+        <div class="bin-top">
+          <span class="bin-name">${label}</span>
+          <span class="bin-swatch" style="background:${c}"></span>
+        </div>
+        <div class="bin-pct">0%</div>
+      `;
+      binsEl.appendChild(bin);
+    });
+  }
+
+  async function loadModel(){
+    try{
+      model = await tmImage.load(MODEL_URL, METADATA_URL);
+      maxPredictions = model.getTotalClasses();
+      const meta = await fetch(METADATA_URL).then(r => r.json());
+      labels = meta.labels;
+      buildBins();
+      loadMsg.textContent = 'Modelo cargado · ' + labels.length + ' clases listas';
+      loadMsg.classList.remove('err');
+    }catch(err){
+      loadMsg.textContent = 'No se pudo cargar el modelo automáticamente (probablemente abriste este archivo con doble clic). Usa la opción de abajo para seleccionar los archivos manualmente.';
+      loadMsg.classList.add('err');
+      document.getElementById('manualLoad').style.display = 'block';
+      console.error(err);
+    }
+  }
+
+  // --- Carga manual sin servidor: usa File objects en vez de fetch ---
+  document.getElementById('manualFiles').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    const modelFile = files.find(f => f.name === 'model.json');
+    const weightsFile = files.find(f => f.name === 'weights.bin');
+    const metadataFile = files.find(f => f.name === 'metadata.json');
+    const statusEl = document.getElementById('manualStatus');
+
+    if(!modelFile || !weightsFile || !metadataFile){
+      statusEl.textContent = 'Faltan archivos. Debes seleccionar exactamente: model.json, weights.bin y metadata.json (los 3 a la vez, con Ctrl+clic).';
+      statusEl.style.color = '#e08585';
+      return;
+    }
+
+    statusEl.textContent = 'Cargando…';
+    statusEl.style.color = '';
+
+    try{
+      model = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
+      maxPredictions = model.getTotalClasses();
+      const meta = JSON.parse(await metadataFile.text());
+      labels = meta.labels;
+      buildBins();
+      statusEl.textContent = 'Modelo cargado correctamente · ' + labels.length + ' clases listas';
+      statusEl.style.color = 'var(--safety)';
+      loadMsg.textContent = '';
+    }catch(err){
+      statusEl.textContent = 'Error al cargar: ' + err.message;
+      statusEl.style.color = '#e08585';
+      console.error(err);
+    }
+  });
+
+  function showImage(src){
+    stopCamera();
+    currentSource = 'image';
+    previewImg.src = src;
+    previewImg.classList.add('active');
+    previewVideo.classList.remove('active');
+    stage.classList.add('has-media');
+    classifyBtn.disabled = false;
+    captureBtn.style.display = 'none';
+  }
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => showImage(ev.target.result);
+    reader.readAsDataURL(file);
+  });
+
+  camBtn.addEventListener('click', async () => {
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      previewVideo.srcObject = stream;
+      currentSource = 'video';
+      previewVideo.classList.add('active');
+      previewImg.classList.remove('active');
+      stage.classList.add('has-media');
+      captureBtn.style.display = 'inline-flex';
+      classifyBtn.disabled = false;
+    }catch(err){
+      alert('No se pudo acceder a la cámara: ' + err.message);
+    }
+  });
+
+  captureBtn.addEventListener('click', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = previewVideo.videoWidth;
+    canvas.height = previewVideo.videoHeight;
+    canvas.getContext('2d').drawImage(previewVideo, 0, 0);
+    showImage(canvas.toDataURL('image/jpeg'));
+  });
+
+  function stopCamera(){
+    if(stream){
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+  }
+
+  classifyBtn.addEventListener('click', async () => {
+    if(!model) return;
+    stage.classList.add('scanning');
+    classifyBtn.disabled = true;
+
+    const el = currentSource === 'video' ? previewVideo : previewImg;
+
+    // pequeña espera para que se vea la animación de escaneo
+    await new Promise(r => setTimeout(r, 900));
+
+    const predictions = await model.predict(el);
+    predictions.sort((a,b) => b.probability - a.probability);
+
+    predictions.forEach(p => {
+      const bin = document.getElementById('bin-' + p.className);
+      if(!bin) return;
+      const pct = Math.round(p.probability * 100);
+      bin.querySelector('.bin-pct').textContent = pct + '%';
+      bin.querySelector('.fill').style.height = pct + '%';
+      bin.classList.toggle('winner', p === predictions[0]);
+      if(p === predictions[0]){
+        bin.style.setProperty('--swatch', colorFor(p.className));
+      }
+    });
+
+    const top = predictions[0];
+    verdictVal.textContent = top.className + ' · ' + Math.round(top.probability * 100) + '%';
+    verdictVal.style.color = colorFor(top.className);
+
+    stage.classList.remove('scanning');
+    classifyBtn.disabled = false;
+  });
+
+  loadModel();
+</script>
+
+</body>
+</html>
